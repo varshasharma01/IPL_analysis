@@ -1,0 +1,10 @@
+# ignore all CSV data
+*.csv
+
+# python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE/config
+.vscode/
