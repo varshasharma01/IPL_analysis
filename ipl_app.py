@@ -70,26 +70,48 @@ st.set_page_config(layout='wide', page_title='IPL Analysis with AI Explainer')
 
 @st.cache_data
 def load_data():
-    # Define only the columns your app actually uses across all modes
+    # 1. Define the specific columns used in your visualizations
     bb_cols = [
         'season', 'match_id', 'runs_total', 'runs_batter', 'wicket_kind', 
         'batting_team', 'over', 'valid_ball', 'bat_pos', 'extra_type', 
         'review_decision', 'bowler', 'fielders', 'non_striker_pos'
     ]
     
-    # 1. Load ball-by-ball data with column filtering
-    # This prevents the 512MB RAM limit crash on Render
-    df1 = pd.read_csv(
-        'IPL_ball_by_ball.zip', 
-        compression='zip', 
-        usecols=bb_cols, 
-        low_memory=False
-    )
-    
-    # 2. Load the smaller team data
-    df2 = pd.read_csv('ipl_team.csv')
+    # 2. Define memory-efficient data types
+    # This is crucial for Render's 512MB RAM limit
+    dtypes_dict = {
+        'match_id': 'int32',
+        'runs_total': 'int8',
+        'runs_batter': 'int8',
+        'over': 'int8',
+        'bat_pos': 'int8',
+        'valid_ball': 'int8'
+    }
 
-    # Clean column names
+    # 3. Locate the file (check root and src folder)
+    file_path = 'IPL_ball_by_ball.zip'
+    if not os.path.exists(file_path):
+        file_path = os.path.join('src', 'IPL_ball_by_ball.zip')
+    
+    team_path = 'ipl_team.csv'
+    if not os.path.exists(team_path):
+        team_path = os.path.join('src', 'ipl_team.csv')
+
+    # 4. Load with heavy optimization
+    try:
+        df1 = pd.read_csv(
+            file_path, 
+            compression='zip', 
+            usecols=bb_cols,    # Only load what we need
+            dtype=dtypes_dict,  # Use small memory footprint
+            low_memory=False
+        )
+        df2 = pd.read_csv(team_path)
+    except Exception as e:
+        st.error(f"Critical Error: Could not load data file. {e}")
+        st.stop()
+
+    # Standardize column names
     df1.columns = df1.columns.str.strip()
     df2.columns = df2.columns.str.strip()
 
@@ -97,7 +119,7 @@ def load_data():
     df1['season'] = df1['season'].astype(str)
     df2['season'] = df2['season'].astype(str)
 
-    # Create integer season IDs for alignment
+    # Create integer season IDs
     years = sorted(df1['season'].unique(), key=lambda x: int(x.split('/')[0]) if x.split('/')[0].isdigit() else x)
     mapping = {year: str(i + 1) for i, year in enumerate(years)}
     df1['season_num'] = df1['season'].map(mapping)
