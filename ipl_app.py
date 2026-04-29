@@ -70,28 +70,37 @@ st.set_page_config(layout='wide', page_title='IPL Analysis with AI Explainer')
 
 @st.cache_data
 def load_data():
-    # read raw data and normalize the season column so filtering is reliable
-    df1 = pd.read_csv('IPL_ball_by_ball.zip',compression='zip', low_memory=False) # Add low_memory=False
+    # Define only the columns your app actually uses across all modes
+    bb_cols = [
+        'season', 'match_id', 'runs_total', 'runs_batter', 'wicket_kind', 
+        'batting_team', 'over', 'valid_ball', 'bat_pos', 'extra_type', 
+        'review_decision', 'bowler', 'fielders', 'non_striker_pos'
+    ]
+    
+    # 1. Load ball-by-ball data with column filtering
+    # This prevents the 512MB RAM limit crash on Render
+    df1 = pd.read_csv(
+        'IPL_ball_by_ball.zip', 
+        compression='zip', 
+        usecols=bb_cols, 
+        low_memory=False
+    )
+    
+    # 2. Load the smaller team data
     df2 = pd.read_csv('ipl_team.csv')
 
-    # strip stray whitespace
+    # Clean column names
     df1.columns = df1.columns.str.strip()
     df2.columns = df2.columns.str.strip()
 
-    # unify season column types: use string everywhere for simplicity
+    # Unify season column types
     df1['season'] = df1['season'].astype(str)
     df2['season'] = df2['season'].astype(str)
 
-    # create integer season IDs in the ball‑by‑ball dataframe so it lines up with
-    # the numeric "season" values used in df2.  The two sources have identical
-    # logical seasons, just labelled differently (year strings vs 1..18).
+    # Create integer season IDs for alignment
     years = sorted(df1['season'].unique(), key=lambda x: int(x.split('/')[0]) if x.split('/')[0].isdigit() else x)
     mapping = {year: str(i + 1) for i, year in enumerate(years)}
     df1['season_num'] = df1['season'].map(mapping)
-
-    # example mapping is available if you ever want to show the year text
-    # alongside the numeric id in the UI
-    # print("season mapping", mapping)
 
     return df1, df2
 
