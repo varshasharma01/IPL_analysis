@@ -1,3 +1,9 @@
+"""
+Streamlit IPL Dashboard — lightweight version.
+Reads aggregated_data.zip (~3MB) instead of the raw 200MB CSV.
+Run preprocess.py locally first to generate that file.
+"""
+
 import streamlit as st
 import pandas as pd
 import seaborn as sns
@@ -8,6 +14,7 @@ import requests
 import warnings
 import io
 import base64
+import zipfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,7 +26,7 @@ warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 st.set_page_config(layout='wide', page_title='IPL Analysis with AI Explainer')
 
 
-# ── API key ───────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 def get_api_key():
     try:
         if "GEMINI_API_KEY" in st.secrets:
@@ -29,96 +36,58 @@ def get_api_key():
     return os.environ.get("GEMINI_API_KEY")
 
 GEMINI_API_KEY = get_api_key()
-BACKEND_URL = "https://ipl-analysis-uq5a.onrender.com"
+BACKEND_URL    = "https://ipl-analysis-uq5a.onrender.com"
 
 
-# ── Data loading (heavily optimized) ─────────────────────────────────────────
+# ── Load pre-aggregated data (~3MB total) ─────────────────────────────────────
 @st.cache_data
 def load_data():
-    bb_cols = [
-        'season', 'match_id', 'runs_total', 'runs_batter', 'wicket_kind',
-        'batting_team', 'over', 'valid_ball', 'bat_pos', 'extra_type',
-        'review_decision', 'bowler', 'fielders', 'non_striker_pos'
-    ]
-    dtypes_dict = {
-        'match_id':    'int32',
-        'runs_total':  'int8',
-        'runs_batter': 'int8',
-        'over':        'int8',
-        'bat_pos':     'int8',
-        'valid_ball':  'int8',
-    }
+    """
+    Reads aggregated_data.zip produced by preprocess.py.
+    All heavy computation was done offline — this is just CSV reads.
+    Total RAM footprint: ~10-20MB.
+    """
+    zip_path = "aggregated_data.zip"
+    if not os.path.exists(zip_path):
+        zip_path = os.path.join("src", zip_path)
 
-    file_path = 'IPL_ball_by_ball.zip'
-    if not os.path.exists(file_path):
-        file_path = os.path.join('src', 'IPL_ball_by_ball.zip')
-
-    team_path = 'ipl_team.csv'
-    if not os.path.exists(team_path):
-        team_path = os.path.join('src', 'ipl_team.csv')
-
-    try:
-        df1 = pd.read_csv(
-            file_path,
-            compression='zip',
-            usecols=bb_cols,
-            dtype=dtypes_dict,
-            low_memory=False,
+    if not os.path.exists(zip_path):
+        st.error(
+            "aggregated_data.zip not found. "
+            "Run preprocess.py locally first, then commit the output file."
         )
-        df2 = pd.read_csv(team_path)
-    except Exception as e:
-        st.error(f"Critical Error: Could not load data file. {e}")
         st.stop()
 
-    df1.columns = df1.columns.str.strip()
-    df2.columns = df2.columns.str.strip()
+    def read(name):
+        with zipfile.ZipFile(zip_path) as zf:
+            with zf.open(name) as f:
+                return pd.read_csv(f)
 
-    df1['season'] = df1['season'].astype(str)
-    df2['season'] = df2['season'].astype(str)
+    d = {}
+    tables = [
+        # Overview
+        "season_match_counts", "team_runs", "run_distribution",
+        "season_summary", "totals",
+        # Team Analysis
+        "winner_counts", "toss_decision", "target_runs", "venue_counts",
+        "result_margin", "match_type_counts", "matches_per_season",
+        "super_over_counts", "city_counts", "pom_counts",
+        # Ball-by-Ball
+        "valid_ball_counts", "runs_per_delivery", "bat_pos_counts",
+        "over_counts", "extra_type_counts", "review_counts",
+        "bowler_workload", "fielder_counts", "non_striker_pos", "phase_counts",
+    ]
+    for t in tables:
+        d[t] = read(f"{t}.csv")
+    return d
 
-    years = sorted(
-        df1['season'].unique(),
-        key=lambda x: int(x.split('/')[0]) if x.split('/')[0].isdigit() else x
-    )
-    mapping = {year: str(i + 1) for i, year in enumerate(years)}
-    df1['season_num'] = df1['season'].map(mapping)
-
-    # FIX 1: Convert high-cardinality string columns to category dtype
-    # Saves ~60-80% memory on these columns
-    for col in ['batting_team', 'wicket_kind', 'extra_type',
-                 'review_decision', 'bowler', 'fielders', 'non_striker_pos']:
-        if col in df1.columns:
-            df1[col] = df1[col].astype('category')
-
-    # FIX 2: Add match_phase as a typed categorical (not object)
-    def get_phase(over):
-        if over < 6:
-            return 'Powerplay'
-        elif over < 15:
-            return 'Middle'
-        return 'Death'
-
-    df1['phase'] = pd.Categorical(
-        df1['over'].map(get_phase),
-        categories=['Powerplay', 'Middle', 'Death'],
-        ordered=True
-    )
-
-    for col in ['winner', 'toss_decision', 'venue', 'match_type',
-                'super_over', 'city', 'player_of_match']:
-        if col in df2.columns:
-            df2[col] = df2[col].astype('category')
-
-    return df1, df2
-
-
-df, df2 = load_data()
+data = load_data()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_image_base64(fig):
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches='tight', dpi=80)  # lower dpi = less RAM
+    fig.savefig(buf, format="png", bbox_inches='tight', dpi=80)
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode('utf-8')
     buf.close()
@@ -140,11 +109,26 @@ def ai_explainer_ui(fig, key_id):
                 if response.status_code == 200:
                     st.info(response.json()['explanation'])
                 elif response.status_code == 401:
-                    st.error("API Error: Unauthorized (API Key mismatch)")
+                    st.error("API Error: Unauthorized")
                 else:
                     st.error(f"API Error: {response.status_code}")
             except Exception as e:
                 st.error(f"Connection Error: {e}")
+
+
+def make_chart(title, plot_fn, key_id):
+    """Render a chart column + AI explainer column, then free the figure."""
+    st.subheader(title)
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig, ax = plt.subplots()
+        plot_fn(ax)
+        plt.tight_layout()
+        st.pyplot(fig)
+    with col2:
+        ai_explainer_ui(fig, key_id)
+    plt.close(fig)
+    st.divider()
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -157,78 +141,50 @@ analysis_mode = st.sidebar.radio(
 st.title(f"🏏 {analysis_mode}")
 
 
-# ── Overview ──────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# OVERVIEW
+# ═══════════════════════════════════════════════════════════════════════════════
 if analysis_mode == "Overview":
-    available_seasons = sorted(
-        df2['season'].unique().tolist(),
-        key=lambda x: int(x) if str(x).isdigit() else x
-    )
-    options = ["All Seasons"] + available_seasons
-    selected_option = st.selectbox("Select Season Focus", options)
+    totals = data["totals"].iloc[0]
 
-    # FIX 3: Use boolean mask instead of df.copy() — avoids duplicating the full dataframe
-    if selected_option == "All Seasons":
-        mask1 = slice(None)       # selects everything without a copy
-        mask2 = slice(None)
-        title_prefix = "All Time"
-        df_f  = df
-        df2_f = df2
-    else:
-        sel_season = selected_option
-        df_f  = df[df['season_num'] == sel_season]
-        df2_f = df2[df2['season'] == sel_season]
-        title_prefix = f"Season {selected_option}"
-
-    total_seasons = df2_f['season'].nunique()
-    total_matches = df_f['match_id'].nunique()
-    total_runs    = pd.to_numeric(df_f['runs_total'], errors='coerce').sum()
-    total_wickets = df_f['wicket_kind'].notna().sum()
-    total_sixes   = (df_f['runs_batter'] == 6).sum()
-    total_fours   = (df_f['runs_batter'] == 4).sum()
-
-    st.subheader(f"📊 {title_prefix} Summary")
-    cols = st.columns(6)
-    for col, label, val in zip(cols, ["Seasons","Matches","Total Runs","Wickets","6s","4s"],
-                                [total_seasons, total_matches, f"{int(total_runs):,}",
-                                 total_wickets, total_sixes, total_fours]):
-        col.metric(label, val)
+    st.subheader("📊 All Time Summary")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Seasons",    int(totals["seasons"]))
+    c2.metric("Matches",    int(totals["matches"]))
+    c3.metric("Total Runs", f"{int(totals['total_runs']):,}")
+    c4.metric("Wickets",    int(totals["wickets"]))
+    c5.metric("6s",         int(totals["sixes"]))
+    c6.metric("4s",         int(totals["fours"]))
 
     col1, col2 = st.columns(2)
 
     with col1:
         with st.container(border=True):
             st.subheader("Matches per Season")
-            season_counts = (
-                df2_f['season']
-                .value_counts()
-                .sort_index(key=lambda s: s.map(lambda x: int(x) if str(x).isdigit() else x))
+            smc = data["season_match_counts"].copy()
+            smc = smc.sort_values(
+                'season',
+                key=lambda s: pd.to_numeric(s, errors='coerce').fillna(0)
             )
             fig1, ax1 = plt.subplots(figsize=(8, 5))
-            ax1.plot(season_counts.index.astype(str), season_counts.values,
+            ax1.plot(smc['season'].astype(str), smc['match_count'],
                      marker='o', color='#1f77b4', linewidth=2)
-            ax1.set_xlabel("Season", fontsize=11)
-            ax1.set_ylabel("Matches Played", fontsize=11)
+            ax1.set_xlabel("Season"); ax1.set_ylabel("Matches Played")
             ax1.tick_params(axis='x', rotation=45)
             ax1.grid(axis='y', alpha=0.3)
             fig1.tight_layout()
             st.pyplot(fig1)
             ai_explainer_ui(fig1, "overview_season")
-            plt.close(fig1)  # FIX 4: always close immediately after render
+            plt.close(fig1)
 
     with col2:
         with st.container(border=True):
             st.subheader("Top 10 Run Scoring Teams")
-            team_runs = (
-                df_f.groupby('batting_team', observed=True)['runs_total']
-                .sum()
-                .sort_values(ascending=False)
-                .head(10)
-            )
+            tr = data["team_runs"]
             fig2, ax2 = plt.subplots(figsize=(8, 5))
-            colors = plt.cm.viridis_r([i / max(len(team_runs) - 1, 1) for i in range(len(team_runs))])
-            ax2.barh(team_runs.index[::-1], team_runs.values[::-1], color=colors)
-            ax2.set_xlabel("Total Runs", fontsize=11)
-            ax2.set_ylabel("Team", fontsize=11)
+            colors = plt.cm.viridis_r([i / max(len(tr)-1, 1) for i in range(len(tr))])
+            ax2.barh(tr['batting_team'][::-1], tr['total_runs'][::-1], color=colors)
+            ax2.set_xlabel("Total Runs"); ax2.set_ylabel("Team")
             ax2.xaxis.set_major_formatter(
                 plt.FuncFormatter(lambda x, _: f"{int(x/1000)}k" if x >= 1000 else str(int(x)))
             )
@@ -240,11 +196,10 @@ if analysis_mode == "Overview":
 
     st.divider()
     st.subheader("Run Distribution per Ball")
-    run_counts = df_f['runs_total'].value_counts().sort_index()
+    rd = data["run_distribution"]
     fig3, ax3 = plt.subplots(figsize=(12, 4))
-    ax3.bar(run_counts.index.astype(str), run_counts.values, color='pink', alpha=0.8)
-    ax3.set_xlabel("Runs per Ball", fontsize=11)
-    ax3.set_ylabel("Frequency", fontsize=11)
+    ax3.bar(rd['runs_per_ball'].astype(str), rd['frequency'], color='pink', alpha=0.8)
+    ax3.set_xlabel("Runs per Ball"); ax3.set_ylabel("Frequency")
     ax3.grid(axis='y', alpha=0.3)
     fig3.tight_layout()
     st.pyplot(fig3)
@@ -252,120 +207,127 @@ if analysis_mode == "Overview":
     plt.close(fig3)
 
 
-# ── IPL Team Analysis ─────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# IPL TEAM ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════════════
 elif analysis_mode == "IPL Team Analysis (2008-2025)":
 
-    # FIX 5: Pre-compute value_counts once — avoids recomputing inside lambdas
-    winner_order  = df2['winner'].value_counts().index.tolist()
-    venue_vc      = df2['venue'].value_counts().head(10)
-    city_vc       = df2['city'].value_counts().head(10)
-    pom_vc        = df2['player_of_match'].value_counts().head(10)
+    def plot_winner(ax):
+        wc = data["winner_counts"]
+        sns.barplot(x='wins', y='winner', data=wc, palette='viridis', ax=ax)
+
+    def plot_toss(ax):
+        td = data["toss_decision"]
+        ax.pie(td['count'], labels=td['decision'].tolist(), autopct='%1.1f%%', startangle=140)
+
+    def plot_target(ax):
+        tr = data["target_runs"].dropna()
+        sns.histplot(x=tr['target_runs'], bins=10, kde=True, ax=ax)
+
+    def plot_venue(ax):
+        vc = data["venue_counts"]
+        sns.barplot(x='count', y='venue', data=vc, ax=ax)
+
+    def plot_margin(ax):
+        rm = data["result_margin"].dropna()
+        sns.boxplot(x=rm['result_margin'], ax=ax)
+
+    def plot_match_type(ax):
+        mt = data["match_type_counts"]
+        sns.barplot(x='match_type', y='count', data=mt, ax=ax)
+
+    def plot_season(ax):
+        ms = data["matches_per_season"]
+        ms = ms.sort_values('season', key=lambda s: pd.to_numeric(s, errors='coerce').fillna(0))
+        sns.barplot(x='season', y='count', data=ms, ax=ax)
+        ax.tick_params(axis='x', rotation=45)
+
+    def plot_super_over(ax):
+        so = data["super_over_counts"]
+        sns.barplot(x='super_over', y='count', data=so, ax=ax)
+
+    def plot_city(ax):
+        cc = data["city_counts"]
+        sns.barplot(x='count', y='city', data=cc, ax=ax)
+
+    def plot_pom(ax):
+        pm = data["pom_counts"]
+        sns.barplot(x='count', y='player', data=pm, ax=ax)
 
     plots = [
-        ("Most Wins by Team",
-         lambda: sns.countplot(data=df2, y='winner', order=winner_order, palette='viridis')),
-
-        ("Toss Decision Preference",
-         lambda: plt.pie(df2['toss_decision'].value_counts(),
-                         labels=df2['toss_decision'].value_counts().index.astype(str).tolist(),
-                         autopct='%1.1f%%', startangle=140)),
-
-        ("Distribution of Target Runs",
-         lambda: sns.histplot(x=df2['target_runs'], bins=10, kde=True)),
-
-        ("Top 10 Venues by Match Count",
-         lambda: sns.barplot(x=venue_vc.values, y=venue_vc.index.tolist())),
-
-        ("Spread of Result Margin",
-         lambda: sns.boxplot(x=df2['result_margin'])),
-
-        ("Match Type Distribution",
-         lambda: sns.countplot(data=df2, x='match_type')),
-
-        ("Matches Played per Season",
-         lambda: sns.countplot(data=df2, x='season')),
-
-        ("Super Over Matches Distribution",
-         lambda: sns.countplot(data=df2, x='super_over')),
-
-        ("Top 10 Cities by Match Count",
-         lambda: sns.barplot(x=city_vc.values, y=city_vc.index.tolist())),
-
-        ("Top 10 Players of the Match",
-         lambda: sns.barplot(x=pom_vc.values, y=pom_vc.index.tolist())),
+        ("Most Wins by Team",            plot_winner),
+        ("Toss Decision Preference",     plot_toss),
+        ("Distribution of Target Runs",  plot_target),
+        ("Top 10 Venues by Match Count", plot_venue),
+        ("Spread of Result Margin",      plot_margin),
+        ("Match Type Distribution",      plot_match_type),
+        ("Matches Played per Season",    plot_season),
+        ("Super Over Matches",           plot_super_over),
+        ("Top 10 Cities by Match Count", plot_city),
+        ("Top 10 Players of the Match",  plot_pom),
     ]
 
-    for i, (title, func) in enumerate(plots):
-        st.subheader(f"{i+1}. {title}")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            fig, ax = plt.subplots()
-            func()
-            if any(kw in title for kw in ("Venue", "Season", "City")):
-                plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig)
-        with col2:
-            ai_explainer_ui(fig, f"team_btn_{i}")
-        plt.close(fig)   # FIX 4 applied to every loop iteration
-        st.divider()
+    for i, (title, fn) in enumerate(plots):
+        make_chart(f"{i+1}. {title}", fn, f"team_btn_{i}")
 
 
-# ── Ball-by-Ball Analysis ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# BALL-BY-BALL ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════════════
 elif analysis_mode == "Ball-by-Ball Analysis":
 
-    # FIX 5: Pre-compute expensive aggregations once
-    bowler_vc   = df['bowler'].value_counts().head(10)
-    fielder_vc  = df['fielders'].value_counts().head(10)
-    extras_df   = df[df['extra_type'].notna()]
-    review_df   = df[df['review_decision'].notna()]
-    review_vc   = review_df['review_decision'].value_counts()
-    phase_vc    = df['phase'].value_counts()
+    def plot_valid_ball(ax):
+        vb = data["valid_ball_counts"]
+        sns.barplot(x='valid_ball', y='count', data=vb, palette='Set1', ax=ax)
+
+    def plot_runs_delivery(ax):
+        rd = data["runs_per_delivery"]
+        sns.barplot(x='runs', y='count', data=rd, palette='viridis', ax=ax)
+
+    def plot_bat_pos(ax):
+        bp = data["bat_pos_counts"]
+        sns.barplot(x='bat_pos', y='count', data=bp, palette='plasma', ax=ax)
+
+    def plot_over_vol(ax):
+        oc = data["over_counts"]
+        sns.barplot(x='over', y='count', data=oc, color='orange', ax=ax)
+
+    def plot_extras(ax):
+        et = data["extra_type_counts"]
+        sns.barplot(x='count', y='extra_type', data=et, palette='magma', ax=ax)
+
+    def plot_drs(ax):
+        rc = data["review_counts"]
+        ax.pie(rc['count'], labels=rc['review_decision'].tolist(), autopct='%1.1f%%')
+
+    def plot_bowler(ax):
+        bw = data["bowler_workload"]
+        sns.barplot(x='deliveries', y='bowler', data=bw, palette='rocket', ax=ax)
+
+    def plot_fielder(ax):
+        fc = data["fielder_counts"]
+        sns.barplot(x='count', y='fielder', data=fc, palette='flare', ax=ax)
+
+    def plot_non_striker(ax):
+        ns = data["non_striker_pos"]
+        sns.barplot(x='position', y='count', data=ns, palette='Set2', ax=ax)
+
+    def plot_phase(ax):
+        pc = data["phase_counts"]
+        ax.pie(pc['count'], labels=pc['phase'].tolist(), autopct='%1.1f%%')
 
     bb_plots = [
-        ("Valid vs Extra Deliveries",
-         lambda: sns.countplot(data=df, x='valid_ball', palette='Set1')),
-
-        ("Runs Scored per Delivery",
-         lambda: sns.countplot(data=df, x='runs_total', palette='viridis')),
-
-        ("Deliveries Faced by Batting Position",
-         lambda: sns.countplot(data=df, x='bat_pos', palette='plasma')),
-
-        ("Ball Data Volume per Over",
-         lambda: sns.histplot(x=df['over'], bins=20, kde=True, color='orange')),
-
-        ("Breakdown of Extras",
-         lambda: sns.countplot(data=extras_df, y='extra_type', palette='magma')),
-
-        ("DRS Review Decisions",
-         lambda: plt.pie(review_vc, labels=review_vc.index.tolist(), autopct='%1.1f%%')),
-
-        ("Top 10 Bowlers by Workload",
-         lambda: sns.barplot(x=bowler_vc.values, y=bowler_vc.index,
-                             hue=bowler_vc.index, palette='rocket', legend=False)),
-
-        ("Top 10 Fielder Involvements",
-         lambda: sns.barplot(x=fielder_vc.values, y=fielder_vc.index,
-                             hue=fielder_vc.index, palette='flare', legend=False)),
-
-        ("Non-Striker Position Distribution",
-         lambda: sns.countplot(data=df, x='non_striker_pos',
-                               hue='non_striker_pos', palette='Set2', legend=False)),
-
-        ("Ball Distribution by Match Phase",
-         lambda: plt.pie(phase_vc, labels=phase_vc.index.tolist(), autopct='%1.1f%%')),
+        ("Valid vs Extra Deliveries",          plot_valid_ball),
+        ("Runs Scored per Delivery",           plot_runs_delivery),
+        ("Deliveries Faced by Batting Position", plot_bat_pos),
+        ("Ball Data Volume per Over",          plot_over_vol),
+        ("Breakdown of Extras",                plot_extras),
+        ("DRS Review Decisions",               plot_drs),
+        ("Top 10 Bowlers by Workload",         plot_bowler),
+        ("Top 10 Fielder Involvements",        plot_fielder),
+        ("Non-Striker Position Distribution",  plot_non_striker),
+        ("Ball Distribution by Match Phase",   plot_phase),
     ]
 
-    for i, (title, func) in enumerate(bb_plots):
-        st.subheader(f"{i+1}. {title}")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            fig, ax = plt.subplots()
-            func()
-            plt.tight_layout()
-            st.pyplot(fig)
-        with col2:
-            ai_explainer_ui(fig, f"bb_btn_{i}")
-        plt.close(fig)   # FIX 4 applied to every loop iteration
-        st.divider()
+    for i, (title, fn) in enumerate(bb_plots):
+        make_chart(f"{i+1}. {title}", fn, f"bb_btn_{i}")
