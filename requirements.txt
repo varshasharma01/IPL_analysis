@@ -1,0 +1,12 @@
+python-multipart
+streamlit
+fastapi
+uvicorn
+pandas
+seaborn
+matplotlib
+requests
+pydantic
+pillow
+python-dotenv
+google-genai
