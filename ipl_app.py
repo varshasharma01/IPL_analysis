@@ -27,15 +27,7 @@ st.set_page_config(layout='wide', page_title='IPL Analysis with AI Explainer')
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-def get_api_key():
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            return st.secrets["GEMINI_API_KEY"]
-    except Exception:
-        pass
-    return os.environ.get("GEMINI_API_KEY")
 
-GEMINI_API_KEY = get_api_key()
 BACKEND_URL    = "https://ipl-analysis-uq5a.onrender.com"
 
 
