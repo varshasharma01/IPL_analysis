@@ -93,29 +93,26 @@ def get_image_base64(fig):
     buf.close()
     return b64
 
-
 def ai_explainer_ui(fig, key_id):
     if st.button("Explain with AI", key=key_id):
         with st.spinner("Analyzing with AI..."):
             try:
                 img_b64 = get_image_base64(fig)
-                headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
+                
+                # No more Authorization header needed unless your senior set one up
                 response = requests.post(
                     f"{BACKEND_URL}/explain-chart",
                     json={"base64_image": img_b64},
-                    headers=headers,
-                    timeout=30,
+                    timeout=60, # Local LLMs take longer than Gemini, so increased timeout
                 )
+                
                 if response.status_code == 200:
                     st.info(response.json()['explanation'])
-                elif response.status_code == 401:
-                    st.error("API Error: Unauthorized")
                 else:
                     st.error(f"API Error: {response.status_code}")
             except Exception as e:
                 st.error(f"Connection Error: {e}")
-
-
+                
 def make_chart(title, plot_fn, key_id):
     """Render a chart column + AI explainer column, then free the figure."""
     st.subheader(title)
