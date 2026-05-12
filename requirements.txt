@@ -10,3 +10,4 @@ pydantic
 pillow
 python-dotenv
 google-genai
+ollama
