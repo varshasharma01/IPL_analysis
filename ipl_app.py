@@ -133,65 +133,30 @@ st.title(f"🏏 {analysis_mode}")
 # ═══════════════════════════════════════════════════════════════════════════════
 # OVERVIEW
 # ═══════════════════════════════════════════════════════════════════════════════
-# ── Sidebar season filter ─────────────────────────────────────────────────────
-smc = data["season_match_counts"].copy()
-available_seasons = sorted(
-    smc['season'].astype(str).unique().tolist(),
-    key=lambda x: int(x) if x.isdigit() else x
-)
-
-selected_season = st.sidebar.selectbox(
-    "🗓️ Select Season",
-    ["All Seasons"] + available_seasons
-)
-
-def filter_season(df, col='season'):
-    if selected_season == "All Seasons":
-        return df.copy()
-    return df[df[col].astype(str) == str(selected_season)].copy()
-
-title_prefix = "All Time" if selected_season == "All Seasons" else f"Season {selected_season}"
-
-# ═══════════════════════════════════════════════════════════════════════════════
 if analysis_mode == "Overview":
     totals = data["totals"].iloc[0]
 
-    # Filter karo
-    smc_f = filter_season(data["season_match_counts"])
-    tr_f  = filter_season(data["team_runs"])
-
-    # Metrics — season select hai toh totals se nahi, filtered se
-    if selected_season == "All Seasons":
-        st.subheader("📊 All Time Summary")
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Seasons",    int(totals["seasons"]))
-        c2.metric("Matches",    int(totals["matches"]))
-        c3.metric("Total Runs", f"{int(totals['total_runs']):,}")
-        c4.metric("Wickets",    int(totals["wickets"]))
-        c5.metric("6s",         int(totals["sixes"]))
-        c6.metric("4s",         int(totals["fours"]))
-    else:
-        ss = filter_season(data["season_summary"])
-        st.subheader(f"📊 Season {selected_season} Summary")
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Seasons",    1)
-        c2.metric("Matches",    int(ss["matches"].sum()) if not ss.empty else "-")
-        c3.metric("Total Runs", f"{int(ss['total_runs'].sum()):,}" if not ss.empty else "-")
-        c4.metric("Wickets",    int(ss["wickets"].sum()) if not ss.empty else "-")
-        c5.metric("6s",         int(ss["sixes"].sum()) if not ss.empty else "-")
-        c6.metric("4s",         int(ss["fours"].sum()) if not ss.empty else "-")
+    st.subheader("📊 All Time Summary")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Seasons",    int(totals["seasons"]))
+    c2.metric("Matches",    int(totals["matches"]))
+    c3.metric("Total Runs", f"{int(totals['total_runs']):,}")
+    c4.metric("Wickets",    int(totals["wickets"]))
+    c5.metric("6s",         int(totals["sixes"]))
+    c6.metric("4s",         int(totals["fours"]))
 
     col1, col2 = st.columns(2)
 
     with col1:
         with st.container(border=True):
             st.subheader("Matches per Season")
-            smc_f = smc_f.sort_values(
+            smc = data["season_match_counts"].copy()
+            smc = smc.sort_values(
                 'season',
                 key=lambda s: pd.to_numeric(s, errors='coerce').fillna(0)
             )
             fig1, ax1 = plt.subplots(figsize=(8, 5))
-            ax1.plot(smc_f['season'].astype(str), smc_f['match_count'],
+            ax1.plot(smc['season'].astype(str), smc['match_count'],
                      marker='o', color='#1f77b4', linewidth=2)
             ax1.set_xlabel("Season"); ax1.set_ylabel("Matches Played")
             ax1.tick_params(axis='x', rotation=45)
@@ -204,9 +169,10 @@ if analysis_mode == "Overview":
     with col2:
         with st.container(border=True):
             st.subheader("Top 10 Run Scoring Teams")
+            tr = data["team_runs"]
             fig2, ax2 = plt.subplots(figsize=(8, 5))
-            colors = plt.cm.viridis_r([i / max(len(tr_f)-1, 1) for i in range(len(tr_f))])
-            ax2.barh(tr_f['batting_team'][::-1], tr_f['total_runs'][::-1], color=colors)
+            colors = plt.cm.viridis_r([i / max(len(tr)-1, 1) for i in range(len(tr))])
+            ax2.barh(tr['batting_team'][::-1], tr['total_runs'][::-1], color=colors)
             ax2.set_xlabel("Total Runs"); ax2.set_ylabel("Team")
             ax2.xaxis.set_major_formatter(
                 plt.FuncFormatter(lambda x, _: f"{int(x/1000)}k" if x >= 1000 else str(int(x)))
@@ -216,6 +182,7 @@ if analysis_mode == "Overview":
             st.pyplot(fig2)
             ai_explainer_ui(fig2, "overview_teams")
             plt.close(fig2)
+
     st.divider()
     st.subheader("Run Distribution per Ball")
     rd = data["run_distribution"]
