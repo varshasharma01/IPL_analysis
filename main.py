@@ -13,25 +13,23 @@ app = FastAPI()
 # 1. Setup the Ollama Client with your specific IP and Port
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
-client = Client(host=OLLAMA_HOST)
+client = Client(
+    host=OLLAMA_HOST,
+    headers={"ngrok-skip-browser-warning": "true"}
+)
 
 class ImageRequest(BaseModel):
     base64_image: str
 
 @app.post("/explain-chart")
 async def explain_chart(request: ImageRequest):
-    # Note: We removed the "Authorization" header check since Ollama 
-    # usually doesn't require one on a private network.
-    
     try:
-        # 2. Convert base64 to bytes (Ollama expects bytes for images)
         image_bytes = base64.b64decode(request.base64_image)
 
-        # 3. Call the Ollama server
         response = client.generate(
             model=OLLAMA_MODEL,
             prompt="You are an expert IPL data analyst. Explain this chart and provide the key insights in concise bullet points.",
-            images=[image_bytes]  # Ollama takes a list of image bytes
+            images=[image_bytes]
         )
 
         return {"explanation": response['response']}
